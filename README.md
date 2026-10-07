@@ -1,69 +1,80 @@
-# Shopping Relevance Models
+# Shopping Ads Relevance
 
-Ranking products for a search query, the way an e-commerce search engine does it.
+Predicting how relevant a product ad is to a shopper's search query, and using that prediction across the whole ads pipeline: retrieval, ad eligibility, ranking and auction pricing.
 
-Given a shopper's query like `stridex running shoes size 10` and a list of candidate products, the goal is to put the products the shopper actually wants at the top. This repo builds that ranking step on the **Amazon Shopping Queries Dataset (ESCI)** and compares a classic keyword baseline against a learned ranker.
+This is a small, end-to-end version of what a shopping ads relevance team does. Human raters judge whether an ad matches a query. A model learns to predict those ratings. The predictions then decide which ads are allowed to show, in what order, and what each advertiser pays. An LLM rater is included too, to test how well a model like Claude can stand in for human raters.
 
-| | |
-|---|---|
-| **Task** | Query-product reranking (ESCI Task 1) |
-| **Data** | [Amazon ESCI](https://github.com/amazon-science/esci-data): ~130k queries, ~2.6M human relevance judgements |
-| **Baselines** | Random, BM25 (title / all fields), character n-gram TF-IDF |
-| **Learned model** | LightGBM LambdaMART on 19 hand-built features |
-| **Optional** | Zero-shot cross-encoder (MiniLM) reranker |
-| **Metrics** | NDCG@5, NDCG@10, NDCG, MRR |
+Everything runs on the **Amazon Shopping Queries Dataset (ESCI)**, which has about 130k real queries and 2.6M human relevance judgements.
 
-## Why this is hard
+```
+                 ┌──────────────────────────────────────────────┐
+ query ──► 1. Retrieval ──► 2. Relevance model ──► 3. Ranking ──► 4. Auction ──► ads shown
+           BM25 over the     predicts the human     LambdaMART     eligibility threshold,
+           full catalog      rating (E/S/C/I)       ranker         ad rank = bid × relevance,
+                                    ▲                              GSP pricing
+                                    │
+                         5. LLM rater (Claude) ── agreement with human raters
+```
 
-ESCI labels every query-product pair as one of four classes, which become graded relevance gains:
+## The human ratings
 
-| Label | Meaning | Example for query `iphone 13` | Gain |
+Every query-product pair in ESCI carries one of four ratings:
+
+| Rating | Meaning | Example for query `iphone 13` |
+|---|---|---|
+| **E**xact | It's what was asked for | iPhone 13, 128GB |
+| **S**ubstitute | Close, but misses a detail | iPhone 12 |
+| **C**omplement | Goes with it, isn't it | Case for iPhone 13 |
+| **I**rrelevant | Unrelated | Garden hose |
+
+Complements are the classic trap for keyword matching: "Case for iPhone 13" contains every word of the query, so a keyword system happily shows it. Several features in this project are built to catch that, like how much of the query appears *after* "for" or "compatible with" in the title.
+
+## The five stages
+
+| Stage | What it does | Code | Metrics |
 |---|---|---|---|
-| **E**xact | It's what was asked for | iPhone 13, 128GB | 3 |
-| **S**ubstitute | Close, but misses a detail | iPhone 12 | 2 |
-| **C**omplement | Goes with it, isn't it | Case for iPhone 13 | 1 |
-| **I**rrelevant | Unrelated | Garden hose | 0 |
+| 1. Retrieval | BM25 (written from scratch with sparse matrices) searches every product in the inventory | `retrieval.py` | recall@10/50/100 of Exact products |
+| 2. Relevance model | LightGBM classifier predicts the human rating from 19 query-ad features, and outputs P(relevant) and an expected rating | `relevance.py`, `features.py` | accuracy, macro F1, AUC, Spearman vs human ratings |
+| 3. Ranking | LambdaMART (LightGBM `lambdarank`) orders candidates, compared with BM25, TF-IDF and random | `rankers/` | NDCG@5, NDCG@10, MRR |
+| 4. Auction | Filters ads below a relevance threshold, ranks by bid × relevance, prices with generalized second price | `auction.py` | irrelevant ads shown, clicks, revenue |
+| 5. LLM rater | Claude rates pairs using rater guidelines with structured output; agreement is measured against humans | `llm_rater.py` | accuracy, Cohen's kappa, confusion matrix |
 
-Complements are the classic trap for keyword search: "Case for iPhone 13" contains every word of the query, so BM25 often ranks it above the phone. The learned model gets features built for exactly this, such as how much of the query appears *after* "for" / "compatible with" in the title.
+### How relevance affects the auction
 
-## How it works
+Each candidate is treated as an ad with a simulated bid (ESCI has no bids). For every query:
 
-```
-query + candidates
-      │
-      ├── BM25 (title, all text, brand) ─┐
-      ├── char n-gram TF-IDF ────────────┤
-      ├── per-query rank and score gap ──┼──► 19 features ──► LightGBM LambdaMART ──► ranked list
-      └── overlap / brand / color /      │                    (optimises NDCG)
-          "for ..." complement signals ──┘
-```
+1. **Eligibility.** Ads with predicted relevance below the threshold are dropped.
+2. **Ranking.** Ad rank = bid × relevance. A relevant ad with a lower bid can beat an irrelevant ad with a higher one.
+3. **Pricing.** Each winner pays just enough to keep its slot: next ad rank ÷ its own relevance. More relevant ads pay less per click.
 
-* **BM25** is implemented from scratch with sparse matrices (`src/shoprel/rankers/bm25.py`), with IDF fitted over the product catalog.
-* **LambdaMART** uses LightGBM's `lambdarank` objective, which directly optimises NDCG over each query's candidate list.
-* **Train/test split** is by query, so no query appears in both. On real ESCI the official `split` column is used.
-* **Evaluation** (`src/shoprel/metrics.py`) uses exponential-gain NDCG and MRR where only Exact matches count as hits.
+Outcomes are scored with the human labels. Clicks come from a click probability per rating and slot, so showing irrelevant ads costs clicks and revenue.
 
 ## Quick start
 
 ```bash
-git clone https://github.com/Ashish-96-12/shopping-relevance-models.git
-cd shopping-relevance-models
+git clone https://github.com/Ashish-96-12/shopping-ads-relevance.git
+cd shopping-ads-relevance
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# 1. Smoke test on generated data, no download needed (~10 seconds)
+# Smoke test on generated data, no download needed (~15 seconds)
 shoprel run --synthetic --n-queries 600 --out reports/synthetic
 
-# 2. Real data: download ESCI (~1 GB of parquet) and run on a laptop-sized sample
+# Real data: download ESCI (~1 GB of parquet), run on a laptop-sized sample
 shoprel download --out data/esci
 shoprel run --data-dir data/esci --n-queries 5000 --out reports/esci_5k
 
-# 3. Optional neural reranker
+# LLM rater: Claude rates 200 human-labelled pairs (uses your Anthropic API key)
+pip install -e ".[llm]"
+export ANTHROPIC_API_KEY=...
+shoprel llm-rate --data-dir data/esci --n-queries 5000 --n-pairs 200
+
+# Optional neural reranker
 pip install -e ".[neural]"
 shoprel run --data-dir data/esci --n-queries 2000 --models bm25_all,lambdamart,cross_encoder
 ```
 
-Each run prints a results table and writes `results.md` and `results.json` to `--out`.
+Each run prints its results and writes `results.md` and `results.json` to `--out`. The LLM rater saves every answer to `llm_labels.jsonl`, so re-running doesn't pay twice. It uses `claude-opus-5-5` at low effort by default; pass `--model` to use another one.
 
 If `shoprel download` fails, grab the two `shopping_queries_dataset_*.parquet` files from the [ESCI repo](https://github.com/amazon-science/esci-data/tree/main/shopping_queries_dataset) and put them in `data/esci/`.
 
@@ -71,26 +82,46 @@ If `shoprel download` fails, grab the two `shopping_queries_dataset_*.parquet` f
 
 ### Synthetic sanity check
 
-The repo ships a small generator (`src/shoprel/synthetic.py`) that builds ESCI-shaped data with the same traps (complements that repeat query words, substitutes that miss a brand or size, synonym queries). It's there for tests and CI, so these numbers only show the pipeline works end to end. Full output is in [`reports/synthetic/results.md`](reports/synthetic/results.md).
+The repo includes a small generator (`synthetic.py`) that builds ESCI-shaped data with the same traps: complements that repeat query words, substitutes that miss a brand or size, and synonym queries. It's there for tests and CI, so these numbers only show that the pipeline works end to end. The full output is in [`reports/synthetic/results.md`](reports/synthetic/results.md). There were 600 queries, split 480 for training and 120 for testing.
 
-| Model | NDCG@5 | NDCG@10 | NDCG | MRR |
-|---|---|---|---|---|
-| Random | 0.485 | 0.562 | 0.747 | 0.440 |
-| TF-IDF (char n-grams, title) | 0.882 | 0.908 | 0.944 | 0.896 |
-| BM25 (title) | 0.927 | 0.939 | 0.968 | 0.969 |
-| BM25 (all fields) | 0.927 | 0.943 | 0.967 | 0.944 |
-| **LambdaMART** | **0.956** | **0.962** | **0.979** | **0.979** |
+**Predicting human ratings**
 
-600 queries, 480 train / 120 test, about 17 candidates per query.
+| Accuracy (4 classes) | Macro F1 | AUC, relevant vs not | Spearman |
+|---|---|---|---|
+| 0.836 | 0.830 | 0.965 | 0.860 |
+
+**Ranking**
+
+| Model | NDCG@5 | NDCG@10 | MRR |
+|---|---|---|---|
+| Random | 0.485 | 0.562 | 0.440 |
+| TF-IDF (char n-grams) | 0.882 | 0.908 | 0.896 |
+| BM25 (all fields) | 0.927 | 0.943 | 0.944 |
+| Relevance model | 0.947 | 0.956 | 0.973 |
+| **LambdaMART** | **0.956** | **0.962** | **0.979** |
+
+**Auction (4 ad slots per query)**
+
+| Policy | Irrelevant ads shown | Clicks per 1k queries | Revenue per 1k queries |
+|---|---|---|---|
+| Bid only, no relevance | 25.0% | 325 | 439 |
+| BM25 score, threshold 0.5 | 1.8% | 548 | 404 |
+| **Relevance model, threshold 0.5** | **1.7%** | **519** | **493** |
+| Human labels (upper bound) | 0.0% | 544 | 534 |
+
+Using the relevance model cuts irrelevant ads from 25% to under 2%, raises clicks by about 60% and raises revenue by about 12% over bid-only. BM25 filtering also removes junk, but it's poorly calibrated and drops good ads too, so revenue falls below bid-only.
 
 ### Real ESCI
 
-Run step 2 of the quick start to fill this in. The command writes the table to `reports/esci_5k/results.md`.
+Run the real-data commands from the quick start to fill this in. The full tables are written to `reports/esci_5k/results.md` and `reports/llm_rater/llm_agreement.json`.
 
-| Model | NDCG@5 | NDCG@10 | NDCG | MRR |
-|---|---|---|---|---|
-| BM25 (all fields) | | | | |
-| LambdaMART | | | | |
+| | Result |
+|---|---|
+| Retrieval recall@100 | |
+| Relevance model AUC | |
+| LambdaMART NDCG@10 vs BM25 | |
+| Irrelevant ads shown: bid only vs relevance model | |
+| LLM rater agreement with humans (accuracy / kappa) | |
 
 ## Project layout
 
@@ -99,39 +130,42 @@ src/shoprel/
   data.py            load + join ESCI parquet, sample queries, split by query
   synthetic.py       ESCI-shaped toy data for tests and demos
   text.py            tokenizer and "for ..." complement splitter
-  features.py        19 query-product features
+  features.py        19 query-ad features (BM25, TF-IDF, overlap, brand, complement signals)
+  retrieval.py       stage 1: BM25 retrieval over the whole catalog, recall@k
+  relevance.py       stage 2: model that predicts the human rating
+  rankers/           stage 3: BM25, TF-IDF, LambdaMART, optional cross-encoder
+  auction.py         stage 4: eligibility, ad rank, GSP pricing, policy comparison
+  llm_rater.py       stage 5: Claude as a relevance rater, agreement with humans
   metrics.py         NDCG@k, MRR
-  pipeline.py        fit every ranker on the same split, write the report
-  cli.py             `shoprel download` / `shoprel run`
-  rankers/
-    bm25.py          BM25 and TF-IDF rankers
-    ltr.py           LightGBM LambdaMART
-    cross_encoder.py optional sentence-transformers reranker
-tests/               pytest suite (metrics, BM25, data loading, end to end)
+  pipeline.py        runs stages 1-4 on one split and writes the report
+  cli.py             `shoprel download | run | llm-rate`
+tests/               pytest suite (32 tests)
 ```
 
 ## Development
 
 ```bash
-pytest           # 23 tests, runs in a few seconds
+pytest           # 32 tests, about 10 seconds
 ruff check .     # lint
 ruff format .    # format
 ```
 
-CI runs lint and tests on every push (`.github/workflows/ci.yml`).
+CI runs lint, the tests and a synthetic end-to-end run on every push (`.github/workflows/ci.yml`). The LLM rater tests use a fake client, so CI needs no API key.
 
 ## Ideas for next steps
 
-* Fine-tune the cross-encoder on ESCI train pairs instead of using it zero-shot, then feed its score into LambdaMART as a feature.
-* Add dense retrieval (bi-encoder + FAISS) as a first stage before reranking.
-* Report metrics per ESCI label to see exactly where complements get ranked too high.
-* Try the Spanish and Japanese locales (`--locale es`, `--locale jp`).
+* **Distillation:** label a large unlabelled sample with the LLM rater and train the relevance model on it, then check whether it closes the gap to the human-label model.
+* Fine-tune the cross-encoder on ESCI pairs and use its score as a relevance-model feature.
+* Add dense retrieval (bi-encoder + FAISS) next to BM25 and compare recall.
+* Learn the eligibility threshold per query category instead of using one global value.
+* Report results per rating to see exactly where complements slip through.
 
 ## References
 
 * Reddy et al., *Shopping Queries Dataset: A Large-Scale ESCI Benchmark for Improving Product Search*, 2022. [arXiv:2206.06588](https://arxiv.org/abs/2206.06588)
+* Edelman, Ostrovsky & Schwarz, *Internet Advertising and the Generalized Second-Price Auction*, 2007.
 * Burges, *From RankNet to LambdaRank to LambdaMART: An Overview*, 2010.
-* Robertson & Zaragoza, *The Probabilistic Relevance Framework: BM25 and Beyond*, 2009.
+* Thomas et al., *Large language models can accurately predict searcher preferences*, 2024. [arXiv:2309.10621](https://arxiv.org/abs/2309.10621)
 
 ## License
 

@@ -25,7 +25,19 @@
       }
     }
   },
-  "metrics": {
+  "retrieval": {
+    "recall@10": 0.6390289449112978,
+    "recall@50": 0.9223222622382287,
+    "recall@100": 0.9549619847939176,
+    "catalog_size": 880
+  },
+  "rating": {
+    "accuracy": 0.8355621594848935,
+    "macro_f1": 0.8300417610063026,
+    "auc_relevant": 0.9651332247710753,
+    "spearman": 0.8602862807900868
+  },
+  "ranking": {
     "random": {
       "ndcg@5": 0.485,
       "ndcg@10": 0.5618,
@@ -39,32 +51,90 @@
       "ndcg@10": 0.9386,
       "ndcg": 0.9684,
       "mrr": 0.9694,
-      "fit_s": 0.0078,
-      "score_s": 0.0196
+      "fit_s": 0.0087,
+      "score_s": 0.0215
     },
     "bm25_all": {
       "ndcg@5": 0.9274,
       "ndcg@10": 0.9428,
       "ndcg": 0.9666,
       "mrr": 0.9438,
-      "fit_s": 0.015,
-      "score_s": 0.0476
+      "fit_s": 0.0178,
+      "score_s": 0.0565
     },
     "tfidf_char_title": {
       "ndcg@5": 0.8824,
       "ndcg@10": 0.9084,
       "ndcg": 0.9442,
       "mrr": 0.8958,
-      "fit_s": 0.1874,
-      "score_s": 0.1195
+      "fit_s": 0.209,
+      "score_s": 0.1305
     },
     "lambdamart": {
       "ndcg@5": 0.956,
       "ndcg@10": 0.9624,
       "ndcg": 0.9794,
       "mrr": 0.9792,
-      "fit_s": 1.5773,
-      "score_s": 0.2904
+      "fit_s": 1.7092,
+      "score_s": 0.2782
+    },
+    "relevance_model": {
+      "ndcg@5": 0.9472,
+      "ndcg@10": 0.9562,
+      "ndcg": 0.9767,
+      "mrr": 0.9729,
+      "fit_s": 2.2347,
+      "score_s": 0.3423
+    }
+  },
+  "auction": {
+    "bid only (no relevance)": {
+      "coverage": 1.0,
+      "ads_per_query": 4.0,
+      "exact_share": 0.2208,
+      "irrelevant_share": 0.25,
+      "clicks_per_1k": 324.7792,
+      "revenue_per_1k": 438.5958
+    },
+    "BM25 score, threshold 0.5": {
+      "coverage": 1.0,
+      "ads_per_query": 3.7167,
+      "exact_share": 0.5583,
+      "irrelevant_share": 0.0179,
+      "clicks_per_1k": 547.5667,
+      "revenue_per_1k": 404.397
+    },
+    "relevance model, threshold 0.3": {
+      "coverage": 1.0,
+      "ads_per_query": 4.0,
+      "exact_share": 0.4125,
+      "irrelevant_share": 0.0208,
+      "clicks_per_1k": 521.0833,
+      "revenue_per_1k": 503.9457
+    },
+    "relevance model, threshold 0.5": {
+      "coverage": 1.0,
+      "ads_per_query": 3.975,
+      "exact_share": 0.4109,
+      "irrelevant_share": 0.0168,
+      "clicks_per_1k": 519.1167,
+      "revenue_per_1k": 492.5948
+    },
+    "relevance model, threshold 0.7": {
+      "coverage": 1.0,
+      "ads_per_query": 3.9583,
+      "exact_share": 0.4063,
+      "irrelevant_share": 0.0168,
+      "clicks_per_1k": 517.0292,
+      "revenue_per_1k": 484.18
+    },
+    "human labels (oracle)": {
+      "coverage": 1.0,
+      "ads_per_query": 4.0,
+      "exact_share": 0.4375,
+      "irrelevant_share": 0.0,
+      "clicks_per_1k": 544.0,
+      "revenue_per_1k": 534.1746
     }
   }
 }
