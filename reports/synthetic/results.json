@@ -1,0 +1,70 @@
+{
+  "info": {
+    "train": {
+      "queries": 480,
+      "pairs": 8059,
+      "products": 880,
+      "avg_candidates_per_query": 16.8,
+      "label_share": {
+        "C": 0.238,
+        "E": 0.216,
+        "I": 0.238,
+        "S": 0.308
+      }
+    },
+    "test": {
+      "queries": 120,
+      "pairs": 2019,
+      "products": 787,
+      "avg_candidates_per_query": 16.8,
+      "label_share": {
+        "C": 0.236,
+        "E": 0.226,
+        "I": 0.241,
+        "S": 0.297
+      }
+    }
+  },
+  "metrics": {
+    "random": {
+      "ndcg@5": 0.485,
+      "ndcg@10": 0.5618,
+      "ndcg": 0.7469,
+      "mrr": 0.4397,
+      "fit_s": 0.0,
+      "score_s": 0.0004
+    },
+    "bm25_title": {
+      "ndcg@5": 0.9274,
+      "ndcg@10": 0.9386,
+      "ndcg": 0.9684,
+      "mrr": 0.9694,
+      "fit_s": 0.0078,
+      "score_s": 0.0196
+    },
+    "bm25_all": {
+      "ndcg@5": 0.9274,
+      "ndcg@10": 0.9428,
+      "ndcg": 0.9666,
+      "mrr": 0.9438,
+      "fit_s": 0.015,
+      "score_s": 0.0476
+    },
+    "tfidf_char_title": {
+      "ndcg@5": 0.8824,
+      "ndcg@10": 0.9084,
+      "ndcg": 0.9442,
+      "mrr": 0.8958,
+      "fit_s": 0.1874,
+      "score_s": 0.1195
+    },
+    "lambdamart": {
+      "ndcg@5": 0.956,
+      "ndcg@10": 0.9624,
+      "ndcg": 0.9794,
+      "mrr": 0.9792,
+      "fit_s": 1.5773,
+      "score_s": 0.2904
+    }
+  }
+}
