@@ -74,3 +74,36 @@ def test_prepare_fills_missing_text_columns():
     df = prepare(pd.DataFrame({"query": ["x"], "esci_label": ["S"], "product_title": ["t"]}))
     assert df.loc[0, "product_brand"] == ""
     assert df.loc[0, "gain"] == 2
+
+
+def test_load_esci_samples_queries_before_reading_products(tmp_path):
+    df = make_synthetic_esci(n_queries=30)
+    examples = df[
+        [
+            "example_id",
+            "query",
+            "query_id",
+            "product_id",
+            "product_locale",
+            "esci_label",
+            "small_version",
+            "large_version",
+        ]
+    ]
+    products = df.drop_duplicates("product_id")[
+        [
+            "product_id",
+            "product_locale",
+            "product_title",
+            "product_description",
+            "product_bullet_point",
+            "product_brand",
+            "product_color",
+        ]
+    ]
+    examples.to_parquet(tmp_path / "shopping_queries_dataset_examples.parquet")
+    products.to_parquet(tmp_path / "shopping_queries_dataset_products.parquet")
+
+    loaded = load_esci(tmp_path, n_queries=5)
+    assert loaded["query_id"].nunique() == 5
+    assert loaded["product_title"].ne("").all()  # every judged product got its text

@@ -1,5 +1,8 @@
 # Shopping Ads Relevance
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Ashish-96-12/shopping-ads-relevance/blob/main/notebooks/shopping_ads_relevance.ipynb)
+[![CI](https://github.com/Ashish-96-12/shopping-ads-relevance/actions/workflows/ci.yml/badge.svg)](https://github.com/Ashish-96-12/shopping-ads-relevance/actions/workflows/ci.yml)
+
 Predicting how relevant a product ad is to a shopper's search query, and using that prediction across the whole ads pipeline: retrieval, ad eligibility, ranking and auction pricing.
 
 This is a small, end-to-end version of what a shopping ads relevance team does. Human raters judge whether an ad matches a query. A model learns to predict those ratings. The predictions then decide which ads are allowed to show, in what order, and what each advertiser pays. An LLM rater is included too, to test how well a model like Claude can stand in for human raters.
@@ -49,7 +52,13 @@ Each candidate is treated as an ad with a simulated bid (ESCI has no bids). For 
 
 Outcomes are scored with the human labels. Clicks come from a click probability per rating and slot, so showing irrelevant ads costs clicks and revenue.
 
-## Quick start
+## Run it in Google Colab
+
+The easiest way to run everything on the real dataset is the [Colab notebook](https://colab.research.google.com/github/Ashish-96-12/shopping-ads-relevance/blob/main/notebooks/shopping_ads_relevance.ipynb). Click the **Open in Colab** badge at the top, then **Runtime → Run all**. It installs the project, downloads ESCI, runs the pipeline and shows the results. The free CPU runtime is enough.
+
+To try the Claude rater there, add your Anthropic API key as a Colab secret named `ANTHROPIC_API_KEY` (the key icon in the left sidebar) and tick `RUN_LLM_RATER` in the notebook.
+
+## Quick start (local)
 
 ```bash
 git clone https://github.com/Ashish-96-12/shopping-ads-relevance.git
@@ -139,13 +148,15 @@ src/shoprel/
   metrics.py         NDCG@k, MRR
   pipeline.py        runs stages 1-4 on one split and writes the report
   cli.py             `shoprel download | run | llm-rate`
-tests/               pytest suite (32 tests)
+notebooks/
+  shopping_ads_relevance.ipynb   one-click Colab run on real data
+tests/               pytest suite (33 tests)
 ```
 
 ## Development
 
 ```bash
-pytest           # 32 tests, about 10 seconds
+pytest           # 33 tests, about 10 seconds
 ruff check .     # lint
 ruff format .    # format
 ```

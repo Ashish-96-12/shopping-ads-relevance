@@ -1,4 +1,4 @@
-"""Command line entry point: ``shoprel download | run``."""
+"""Command line entry point: ``shoprel download | run | llm-rate``."""
 
 from __future__ import annotations
 
@@ -65,8 +65,9 @@ def cmd_run(args: argparse.Namespace) -> None:
 def _load(args: argparse.Namespace):
     if args.synthetic:
         return make_synthetic_esci(n_queries=args.n_queries or 400, seed=args.seed)
-    df = data.load_esci(args.data_dir, locale=args.locale)
-    return data.sample_queries(df, args.n_queries, seed=args.seed)
+    return data.load_esci(
+        args.data_dir, locale=args.locale, n_queries=args.n_queries, seed=args.seed
+    )
 
 
 def cmd_llm_rate(args: argparse.Namespace) -> None:

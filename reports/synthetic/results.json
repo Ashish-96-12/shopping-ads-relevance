@@ -51,7 +51,7 @@
       "ndcg@10": 0.9386,
       "ndcg": 0.9684,
       "mrr": 0.9694,
-      "fit_s": 0.0087,
+      "fit_s": 0.0083,
       "score_s": 0.0215
     },
     "bm25_all": {
@@ -59,32 +59,32 @@
       "ndcg@10": 0.9428,
       "ndcg": 0.9666,
       "mrr": 0.9438,
-      "fit_s": 0.0178,
-      "score_s": 0.0565
+      "fit_s": 0.0159,
+      "score_s": 0.0512
     },
     "tfidf_char_title": {
       "ndcg@5": 0.8824,
       "ndcg@10": 0.9084,
       "ndcg": 0.9442,
       "mrr": 0.8958,
-      "fit_s": 0.209,
-      "score_s": 0.1305
+      "fit_s": 0.2409,
+      "score_s": 0.1279
     },
     "lambdamart": {
       "ndcg@5": 0.956,
       "ndcg@10": 0.9624,
       "ndcg": 0.9794,
       "mrr": 0.9792,
-      "fit_s": 1.7092,
-      "score_s": 0.2782
+      "fit_s": 1.7487,
+      "score_s": 0.2715
     },
     "relevance_model": {
       "ndcg@5": 0.9472,
       "ndcg@10": 0.9562,
       "ndcg": 0.9767,
       "mrr": 0.9729,
-      "fit_s": 2.2347,
-      "score_s": 0.3423
+      "fit_s": 2.2168,
+      "score_s": 0.3339
     }
   },
   "auction": {
