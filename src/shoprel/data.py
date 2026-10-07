@@ -35,20 +35,30 @@ def load_esci(
     data_dir: str | Path,
     locale: str = "us",
     small_version: bool = True,
+    n_queries: int | None = None,
+    seed: int = 42,
 ) -> pd.DataFrame:
     """Read and join the ESCI examples and products for one locale.
 
     ``small_version`` selects Task 1 (query-product ranking), the reduced
     version of the data that is meant for reranking experiments.
+
+    With ``n_queries`` the queries are sampled *before* the product table is
+    read, and only the products those queries need are loaded. That keeps
+    memory low enough for a laptop or a free Colab runtime.
     """
     data_dir = Path(data_dir)
     examples = pd.read_parquet(data_dir / EXAMPLES_FILE)
-    products = pd.read_parquet(data_dir / PRODUCTS_FILE)
-
     examples = examples[examples["product_locale"] == locale]
     if small_version:
         examples = examples[examples["small_version"] == 1]
-    products = products[products["product_locale"] == locale]
+    examples = sample_queries(examples, n_queries, seed=seed)
+
+    wanted = examples["product_id"].unique().tolist()
+    products = pd.read_parquet(
+        data_dir / PRODUCTS_FILE,
+        filters=[("product_locale", "==", locale), ("product_id", "in", wanted)],
+    )
 
     df = examples.merge(products, on=["product_id", "product_locale"], how="left")
     return prepare(df)
