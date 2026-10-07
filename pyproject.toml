@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "shoprel"
 version = "0.1.0"
-description = "Product search relevance ranking on the Amazon Shopping Queries (ESCI) dataset: BM25 baseline, LightGBM LambdaMART, and an optional cross-encoder."
+description = "Shopping ads relevance: predict human relevance ratings for query-product ad pairs and use them in retrieval, ad eligibility, ranking and auction pricing. Built on Amazon ESCI."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -20,6 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 neural = ["sentence-transformers>=2.6", "torch>=2.1"]
+llm = ["anthropic>=1.0"]
 dev = ["pytest>=7.4", "ruff>=0.5"]
 
 [project.scripts]

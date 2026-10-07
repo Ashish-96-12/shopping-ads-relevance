@@ -10,9 +10,12 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from shoprel.auction import compare_policies
 from shoprel.metrics import evaluate_ranking
 from shoprel.rankers import BM25Ranker, TfidfRanker
 from shoprel.rankers.ltr import LambdaMARTRanker
+from shoprel.relevance import RelevanceRater, rating_metrics
+from shoprel.retrieval import evaluate_retrieval
 
 
 def build_rankers(names: list[str]) -> list:
@@ -23,6 +26,7 @@ def build_rankers(names: list[str]) -> list:
         "bm25_all": lambda: BM25Ranker(field="all"),
         "tfidf": lambda: TfidfRanker(field="title"),
         "lambdamart": LambdaMARTRanker,
+        "relevance_model": RelevanceRater,
     }
     rankers = []
     for name in names:
@@ -59,26 +63,48 @@ class ExperimentResult:
     metrics: pd.DataFrame
     feature_importance: pd.Series | None = None
     scored_test: pd.DataFrame | None = None
+    rating: dict | None = None
+    retrieval: dict | None = None
+    auction: pd.DataFrame | None = None
     info: dict = field(default_factory=dict)
 
 
-def run_experiment(train: pd.DataFrame, test: pd.DataFrame, rankers: list) -> ExperimentResult:
+def run_experiment(
+    train: pd.DataFrame, test: pd.DataFrame, rankers: list, ads: bool = True
+) -> ExperimentResult:
+    """Fit and score every ranker; with ``ads`` also run retrieval and the auction."""
     rows = []
     scored = test[["query_id", "query", "product_id", "product_title", "esci_label", "gain"]].copy()
-    importance = None
+    result = ExperimentResult(metrics=pd.DataFrame(), scored_test=scored)
     for ranker in rankers:
         t0 = time.perf_counter()
         ranker.fit(train)
         fit_s = time.perf_counter() - t0
         t0 = time.perf_counter()
-        scored[ranker.name] = ranker.score(test)
+        if isinstance(ranker, RelevanceRater):
+            pred = ranker.predict(test)
+            scored[ranker.name] = pred["expected_rating"].to_numpy()
+            scored["p_relevant"] = pred["p_relevant"].to_numpy()
+            result.rating = rating_metrics(test["esci_label"], pred)
+        else:
+            scored[ranker.name] = ranker.score(test)
         score_s = time.perf_counter() - t0
         metrics = evaluate_ranking(scored, score_col=ranker.name)
         rows.append({"model": ranker.name, **metrics, "fit_s": fit_s, "score_s": score_s})
         if isinstance(ranker, LambdaMARTRanker):
-            importance = ranker.feature_importance()
-    table = pd.DataFrame(rows).set_index("model")
-    return ExperimentResult(metrics=table, feature_importance=importance, scored_test=scored)
+            result.feature_importance = ranker.feature_importance()
+    result.metrics = pd.DataFrame(rows).set_index("model")
+
+    if ads:
+        result.retrieval = evaluate_retrieval(train, test)
+        if "p_relevant" in scored:
+            bm25 = (
+                scored["bm25_all"] if "bm25_all" in scored else BM25Ranker().fit(train).score(test)
+            )
+            result.auction = compare_policies(
+                test, scored["p_relevant"].to_numpy(), np.asarray(bm25)
+            )
+    return result
 
 
 def write_report(result: ExperimentResult, out_dir: str | Path, title: str) -> Path:
@@ -90,7 +116,39 @@ def write_report(result: ExperimentResult, out_dir: str | Path, title: str) -> P
     lines = [f"# {title}", ""]
     if result.info:
         lines += ["## Data", "", "```json", json.dumps(result.info, indent=2), "```", ""]
-    lines += ["## Results (test queries)", "", _markdown_table(result.metrics[metric_cols]), ""]
+    if result.retrieval:
+        lines += [
+            "## 1. Retrieval: BM25 over the whole ad inventory",
+            "",
+            _markdown_table(
+                pd.DataFrame([result.retrieval], index=pd.Index(["bm25"], name="retriever"))
+            ),
+            "",
+        ]
+    if result.rating:
+        lines += [
+            "## 2. Predicting human ratings (relevance model)",
+            "",
+            _markdown_table(
+                pd.DataFrame([result.rating], index=pd.Index(["relevance_model"], name="model"))
+            ),
+            "",
+        ]
+    lines += [
+        "## 3. Ranking candidates (test queries)",
+        "",
+        _markdown_table(result.metrics[metric_cols]),
+        "",
+    ]
+    if result.auction is not None:
+        lines += [
+            "## 4. Ads auction: eligibility, ranking and pricing",
+            "",
+            "Bids are simulated. Outcomes are scored with the human labels.",
+            "",
+            _markdown_table(result.auction),
+            "",
+        ]
     if result.feature_importance is not None:
         top = result.feature_importance.head(10)
         share = (top / result.feature_importance.sum()).rename("gain_share")
@@ -104,7 +162,15 @@ def write_report(result: ExperimentResult, out_dir: str | Path, title: str) -> P
     path = out_dir / "results.md"
     path.write_text("\n".join(lines))
 
-    payload = {"info": result.info, "metrics": result.metrics.round(4).to_dict(orient="index")}
+    payload = {
+        "info": result.info,
+        "retrieval": result.retrieval,
+        "rating": result.rating,
+        "ranking": result.metrics.round(4).to_dict(orient="index"),
+        "auction": None
+        if result.auction is None
+        else result.auction.round(4).to_dict(orient="index"),
+    }
     (out_dir / "results.json").write_text(json.dumps(payload, indent=2))
     return path
 
@@ -113,6 +179,12 @@ def _markdown_table(df: pd.DataFrame) -> str:
     cols = [df.index.name or ""] + list(df.columns)
     out = ["| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
     for idx, row in df.iterrows():
-        vals = [f"{v:.4f}" if isinstance(v, float) else str(v) for v in row]
+        vals = [_fmt(v) for v in row]
         out.append("| " + " | ".join([str(idx), *vals]) + " |")
     return "\n".join(out)
+
+
+def _fmt(v) -> str:
+    if isinstance(v, float):
+        return str(int(v)) if v.is_integer() and abs(v) >= 2 else f"{v:.4f}"
+    return str(v)

@@ -50,5 +50,5 @@ def test_cli_run_writes_report(tmp_path):
         ]
     )
     payload = json.loads((tmp_path / "results.json").read_text())
-    assert set(payload["metrics"]) == {"bm25_title", "lambdamart"}
+    assert set(payload["ranking"]) == {"bm25_title", "lambdamart"}
     assert (tmp_path / "results.md").read_text().startswith("# Results")
