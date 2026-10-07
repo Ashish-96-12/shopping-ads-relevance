@@ -3,62 +3,62 @@
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Ashish-96-12/shopping-ads-relevance/blob/main/notebooks/shopping_ads_relevance.ipynb)
 [![CI](https://github.com/Ashish-96-12/shopping-ads-relevance/actions/workflows/ci.yml/badge.svg)](https://github.com/Ashish-96-12/shopping-ads-relevance/actions/workflows/ci.yml)
 
-Predicting how relevant a product ad is to a shopper's search query, and using that prediction across the whole ads pipeline: retrieval, ad eligibility, ranking and auction pricing.
+When you search for something on a shopping site, the ads you see are supposed to match what you actually want. A lot of the time they don't. You search for an iPhone and get a phone case, or a different phone, or something totally random.
 
-This is a small, end-to-end version of what a shopping ads relevance team does. Human raters judge whether an ad matches a query. A model learns to predict those ratings. The predictions then decide which ads are allowed to show, in what order, and what each advertiser pays. An LLM rater is included too, to test how well a model like Claude can stand in for human raters.
+I built this project to understand how that problem gets solved in a real ads system. The idea is pretty simple. People (human raters) look at a search query and an ad and say how good a match it is. You train a model to predict what those raters would say. Then you use that prediction everywhere: to pick which ads are allowed to show, what order they go in, and even how much the advertiser pays.
 
-Everything runs on the **Amazon Shopping Queries Dataset (ESCI)**, which has about 130k real queries and 2.6M human relevance judgements.
+I also wanted to see if an LLM (Claude) could do the rater's job, so there's a part for that too.
+
+Everything runs on the **Amazon Shopping Queries Dataset (ESCI)**. It has around 130k real search queries and 2.6M query-product pairs that people have already labelled.
+
+## How it fits together
 
 ```
-                 ┌──────────────────────────────────────────────┐
  query ──► 1. Retrieval ──► 2. Relevance model ──► 3. Ranking ──► 4. Auction ──► ads shown
-           BM25 over the     predicts the human     LambdaMART     eligibility threshold,
+           BM25 over the     predicts the human     LambdaMART     relevance threshold,
            full catalog      rating (E/S/C/I)       ranker         ad rank = bid × relevance,
-                                    ▲                              GSP pricing
+                                    ▲                              second-price pricing
                                     │
-                         5. LLM rater (Claude) ── agreement with human raters
+                         5. LLM rater (Claude), checked against the human ratings
 ```
 
-## The human ratings
+## What the labels mean
 
-Every query-product pair in ESCI carries one of four ratings:
+Every query-product pair in ESCI has one of four labels:
 
-| Rating | Meaning | Example for query `iphone 13` |
+| Label | What it means | Example for `iphone 13` |
 |---|---|---|
-| **E**xact | It's what was asked for | iPhone 13, 128GB |
-| **S**ubstitute | Close, but misses a detail | iPhone 12 |
-| **C**omplement | Goes with it, isn't it | Case for iPhone 13 |
-| **I**rrelevant | Unrelated | Garden hose |
+| **E**xact | It's what you asked for | iPhone 13, 128GB |
+| **S**ubstitute | Close, but not quite | iPhone 12 |
+| **C**omplement | Goes with it, but isn't it | Case for iPhone 13 |
+| **I**rrelevant | Nothing to do with it | Garden hose |
 
-Complements are the classic trap for keyword matching: "Case for iPhone 13" contains every word of the query, so a keyword system happily shows it. Several features in this project are built to catch that, like how much of the query appears *after* "for" or "compatible with" in the title.
+The complements were the most interesting part for me. "Case for iPhone 13" has every single word from the query in it, so plain keyword search loves it and ranks it near the top. I added a few features to catch this. One of them checks how much of the query shows up *after* words like "for" or "compatible with" in the title. That's usually a sign it's an accessory, not the thing itself.
 
-## The five stages
+## The five parts
 
-| Stage | What it does | Code | Metrics |
-|---|---|---|---|
-| 1. Retrieval | BM25 (written from scratch with sparse matrices) searches every product in the inventory | `retrieval.py` | recall@10/50/100 of Exact products |
-| 2. Relevance model | LightGBM classifier predicts the human rating from 19 query-ad features, and outputs P(relevant) and an expected rating | `relevance.py`, `features.py` | accuracy, macro F1, AUC, Spearman vs human ratings |
-| 3. Ranking | LambdaMART (LightGBM `lambdarank`) orders candidates, compared with BM25, TF-IDF and random | `rankers/` | NDCG@5, NDCG@10, MRR |
-| 4. Auction | Filters ads below a relevance threshold, ranks by bid × relevance, prices with generalized second price | `auction.py` | irrelevant ads shown, clicks, revenue |
-| 5. LLM rater | Claude rates pairs using rater guidelines with structured output; agreement is measured against humans | `llm_rater.py` | accuracy, Cohen's kappa, confusion matrix |
+**1. Retrieval.** Before you can rank ads you need to find candidates. I wrote BM25 from scratch with sparse matrices and use it to search the whole product catalog. I measure recall: of the products people marked Exact, how many make it into the top 10, 50 and 100. (`retrieval.py`)
 
-### How relevance affects the auction
+**2. Relevance model.** This is the core of the project. It's a LightGBM classifier that looks at 19 features of a query-ad pair and predicts which of the four labels a human would give it. From that I get a "probability this ad is relevant" score, which the auction uses. (`relevance.py`, `features.py`)
 
-Each candidate is treated as an ad with a simulated bid (ESCI has no bids). For every query:
+**3. Ranking.** A LambdaMART ranker (LightGBM's `lambdarank`) that orders the candidates for each query. I compare it against BM25, TF-IDF and random ordering, using NDCG and MRR. (`rankers/`)
 
-1. **Eligibility.** Ads with predicted relevance below the threshold are dropped.
-2. **Ranking.** Ad rank = bid × relevance. A relevant ad with a lower bid can beat an irrelevant ad with a higher one.
-3. **Pricing.** Each winner pays just enough to keep its slot: next ad rank ÷ its own relevance. More relevant ads pay less per click.
+**4. Ads auction.** This is where relevance actually affects what gets shown and what it costs. For each query:
+- Ads with low predicted relevance get filtered out.
+- The rest are ranked by bid × relevance, so a relevant ad with a smaller bid can beat an irrelevant one with a bigger bid.
+- Each winner pays just enough to keep its spot (a second-price auction), and more relevant ads end up paying less per click.
 
-Outcomes are scored with the human labels. Clicks come from a click probability per rating and slot, so showing irrelevant ads costs clicks and revenue.
+ESCI doesn't have real bids, so I simulate them. Clicks come from the human labels, so showing junk ads actually costs you clicks and money in the simulation. (`auction.py`)
+
+**5. LLM rater.** I give Claude the same kind of rating guidelines a human rater would get, ask it to label query-ad pairs, and compare its answers with the human labels (accuracy, Cohen's kappa and a confusion matrix). If it agrees well enough, you could use it to label a lot more data cheaply. (`llm_rater.py`)
 
 ## Run it in Google Colab
 
-The easiest way to run everything on the real dataset is the [Colab notebook](https://colab.research.google.com/github/Ashish-96-12/shopping-ads-relevance/blob/main/notebooks/shopping_ads_relevance.ipynb). Click the **Open in Colab** badge at the top, then **Runtime → Run all**. It installs the project, downloads ESCI, runs the pipeline and shows the results. The free CPU runtime is enough.
+This is the easiest way to run everything on the real data. Click the **Open in Colab** badge at the top, then **Runtime → Run all**. It installs the project, downloads ESCI, runs the whole pipeline and shows the results. The free CPU runtime is fine.
 
-To try the Claude rater there, add your Anthropic API key as a Colab secret named `ANTHROPIC_API_KEY` (the key icon in the left sidebar) and tick `RUN_LLM_RATER` in the notebook.
+If you want to try the Claude rater, add your Anthropic API key as a Colab secret called `ANTHROPIC_API_KEY` (it's the key icon in the left sidebar), then tick `RUN_LLM_RATER` in the notebook.
 
-## Quick start (local)
+## Run it on your own machine
 
 ```bash
 git clone https://github.com/Ashish-96-12/shopping-ads-relevance.git
@@ -66,36 +66,36 @@ cd shopping-ads-relevance
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Smoke test on generated data, no download needed (~15 seconds)
+# quick check on generated data, no download needed (about 15 seconds)
 shoprel run --synthetic --n-queries 600 --out reports/synthetic
 
-# Real data: download ESCI (~1 GB of parquet), run on a laptop-sized sample
+# real data: download ESCI (about 1 GB) and run on a sample
 shoprel download --out data/esci
 shoprel run --data-dir data/esci --n-queries 5000 --out reports/esci_5k
 
-# LLM rater: Claude rates 200 human-labelled pairs (uses your Anthropic API key)
+# LLM rater: Claude labels 200 pairs (needs your Anthropic API key)
 pip install -e ".[llm]"
 export ANTHROPIC_API_KEY=...
 shoprel llm-rate --data-dir data/esci --n-queries 5000 --n-pairs 200
 
-# Optional neural reranker
+# optional neural reranker
 pip install -e ".[neural]"
 shoprel run --data-dir data/esci --n-queries 2000 --models bm25_all,lambdamart,cross_encoder
 ```
 
-Each run prints its results and writes `results.md` and `results.json` to `--out`. The LLM rater saves every answer to `llm_labels.jsonl`, so re-running doesn't pay twice. It uses `claude-opus-5-5` at low effort by default; pass `--model` to use another one.
+Every run prints the results and saves `results.md` and `results.json` to the `--out` folder. The LLM rater saves each answer to `llm_labels.jsonl`, so if you run it again it won't pay for the same pairs twice. It uses `claude-opus-5-5` at low effort by default, and you can switch models with `--model`.
 
-If `shoprel download` fails, grab the two `shopping_queries_dataset_*.parquet` files from the [ESCI repo](https://github.com/amazon-science/esci-data/tree/main/shopping_queries_dataset) and put them in `data/esci/`.
+If `shoprel download` doesn't work for you, grab the two `shopping_queries_dataset_*.parquet` files from the [ESCI repo](https://github.com/amazon-science/esci-data/tree/main/shopping_queries_dataset) and drop them into `data/esci/`.
 
 ## Results
 
-### Synthetic sanity check
+### On generated test data
 
-The repo includes a small generator (`synthetic.py`) that builds ESCI-shaped data with the same traps: complements that repeat query words, substitutes that miss a brand or size, and synonym queries. It's there for tests and CI, so these numbers only show that the pipeline works end to end. The full output is in [`reports/synthetic/results.md`](reports/synthetic/results.md). There were 600 queries, split 480 for training and 120 for testing.
+To be upfront: these numbers are **not** from the real dataset. I wrote a small generator (`synthetic.py`) that makes fake data in the same format as ESCI, with the same tricky cases built in. It's mainly there so the tests and CI can run without downloading 1 GB. So treat these as "the pipeline works end to end", not as real performance. The full output is in [`reports/synthetic/results.md`](reports/synthetic/results.md). It used 600 queries, with 480 for training and 120 for testing.
 
-**Predicting human ratings**
+**Predicting the human rating**
 
-| Accuracy (4 classes) | Macro F1 | AUC, relevant vs not | Spearman |
+| Accuracy (4 labels) | Macro F1 | AUC (relevant vs not) | Spearman |
 |---|---|---|---|
 | 0.836 | 0.830 | 0.965 | 0.860 |
 
@@ -113,16 +113,16 @@ The repo includes a small generator (`synthetic.py`) that builds ESCI-shaped dat
 
 | Policy | Irrelevant ads shown | Clicks per 1k queries | Revenue per 1k queries |
 |---|---|---|---|
-| Bid only, no relevance | 25.0% | 325 | 439 |
+| Bid only, ignore relevance | 25.0% | 325 | 439 |
 | BM25 score, threshold 0.5 | 1.8% | 548 | 404 |
 | **Relevance model, threshold 0.5** | **1.7%** | **519** | **493** |
-| Human labels (upper bound) | 0.0% | 544 | 534 |
+| Human labels (best case) | 0.0% | 544 | 534 |
 
-Using the relevance model cuts irrelevant ads from 25% to under 2%, raises clicks by about 60% and raises revenue by about 12% over bid-only. BM25 filtering also removes junk, but it's poorly calibrated and drops good ads too, so revenue falls below bid-only.
+This was the part I found most interesting. Once the relevance model is in the loop, irrelevant ads drop from 25% to under 2%, clicks go up by about 60%, and revenue goes up by about 12% compared to just picking the highest bid. BM25 also filters out the junk, but its scores aren't real probabilities, so it throws away good ads too and revenue actually ends up lower than bid-only.
 
-### Real ESCI
+### On the real ESCI data
 
-Run the real-data commands from the quick start to fill this in. The full tables are written to `reports/esci_5k/results.md` and `reports/llm_rater/llm_agreement.json`.
+Still to fill in once I run it on the real data (the Colab notebook does this). The full tables end up in `reports/esci_5k/results.md` and `reports/llm_rater/llm_agreement.json`.
 
 | | Result |
 |---|---|
@@ -132,51 +132,51 @@ Run the real-data commands from the quick start to fill this in. The full tables
 | Irrelevant ads shown: bid only vs relevance model | |
 | LLM rater agreement with humans (accuracy / kappa) | |
 
-## Project layout
+## What's where
 
 ```
 src/shoprel/
-  data.py            load + join ESCI parquet, sample queries, split by query
-  synthetic.py       ESCI-shaped toy data for tests and demos
-  text.py            tokenizer and "for ..." complement splitter
-  features.py        19 query-ad features (BM25, TF-IDF, overlap, brand, complement signals)
-  retrieval.py       stage 1: BM25 retrieval over the whole catalog, recall@k
-  relevance.py       stage 2: model that predicts the human rating
-  rankers/           stage 3: BM25, TF-IDF, LambdaMART, optional cross-encoder
-  auction.py         stage 4: eligibility, ad rank, GSP pricing, policy comparison
-  llm_rater.py       stage 5: Claude as a relevance rater, agreement with humans
-  metrics.py         NDCG@k, MRR
-  pipeline.py        runs stages 1-4 on one split and writes the report
-  cli.py             `shoprel download | run | llm-rate`
+  data.py            loads and joins the ESCI files, samples queries, splits by query
+  synthetic.py       generates fake ESCI-style data for tests and demos
+  text.py            tokenizer and the "for ..." accessory check
+  features.py        the 19 query-ad features
+  retrieval.py       part 1: BM25 search over the whole catalog
+  relevance.py       part 2: model that predicts the human rating
+  rankers/           part 3: BM25, TF-IDF, LambdaMART, optional cross-encoder
+  auction.py         part 4: filtering, ad rank, pricing, comparing policies
+  llm_rater.py       part 5: Claude as a rater
+  metrics.py         NDCG and MRR
+  pipeline.py        runs parts 1 to 4 and writes the report
+  cli.py             the `shoprel download | run | llm-rate` commands
 notebooks/
-  shopping_ads_relevance.ipynb   one-click Colab run on real data
-tests/               pytest suite (33 tests)
+  shopping_ads_relevance.ipynb   the Colab notebook
+tests/               33 tests
 ```
 
-## Development
+## Tests and linting
 
 ```bash
-pytest           # 33 tests, about 10 seconds
+pytest           # 33 tests, takes about 10 seconds
 ruff check .     # lint
 ruff format .    # format
 ```
 
-CI runs lint, the tests and a synthetic end-to-end run on every push (`.github/workflows/ci.yml`). The LLM rater tests use a fake client, so CI needs no API key.
+GitHub Actions runs the lint, the tests and a quick end-to-end run on every push. The LLM rater tests use a fake client, so CI doesn't need an API key.
 
-## Ideas for next steps
+## Things I'd like to try next
 
-* **Distillation:** label a large unlabelled sample with the LLM rater and train the relevance model on it, then check whether it closes the gap to the human-label model.
-* Fine-tune the cross-encoder on ESCI pairs and use its score as a relevance-model feature.
-* Add dense retrieval (bi-encoder + FAISS) next to BM25 and compare recall.
-* Learn the eligibility threshold per query category instead of using one global value.
-* Report results per rating to see exactly where complements slip through.
+- Use the LLM rater to label a big batch of unlabelled pairs, train the relevance model on those labels, and see how close it gets to the one trained on human labels.
+- Fine-tune the cross-encoder on ESCI and use its score as another feature.
+- Add dense retrieval (a bi-encoder with FAISS) next to BM25 and compare recall.
+- Learn a separate relevance threshold for each product category instead of one global number.
+- Break the results down by label to see exactly where complements still slip through.
 
 ## References
 
-* Reddy et al., *Shopping Queries Dataset: A Large-Scale ESCI Benchmark for Improving Product Search*, 2022. [arXiv:2206.06588](https://arxiv.org/abs/2206.06588)
-* Edelman, Ostrovsky & Schwarz, *Internet Advertising and the Generalized Second-Price Auction*, 2007.
-* Burges, *From RankNet to LambdaRank to LambdaMART: An Overview*, 2010.
-* Thomas et al., *Large language models can accurately predict searcher preferences*, 2024. [arXiv:2309.10621](https://arxiv.org/abs/2309.10621)
+- Reddy et al., *Shopping Queries Dataset: A Large-Scale ESCI Benchmark for Improving Product Search*, 2022. [arXiv:2206.06588](https://arxiv.org/abs/2206.06588)
+- Edelman, Ostrovsky & Schwarz, *Internet Advertising and the Generalized Second-Price Auction*, 2007.
+- Burges, *From RankNet to LambdaRank to LambdaMART: An Overview*, 2010.
+- Thomas et al., *Large language models can accurately predict searcher preferences*, 2024. [arXiv:2309.10621](https://arxiv.org/abs/2309.10621)
 
 ## License
 
